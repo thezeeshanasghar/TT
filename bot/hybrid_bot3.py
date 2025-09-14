@@ -50,6 +50,8 @@ ATR_MULTIPLIER = float(os.getenv("ATR_MULTIPLIER", "1.5"))
 MIN_RR = float(os.getenv("MIN_RR", "1.8"))
 SLEEP_SECONDS = int(os.getenv("SLEEP_SECONDS", "60"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "30"))  # Minimum time between trades
+MIN_SIGNAL_STRENGTH = int(os.getenv("MIN_SIGNAL_STRENGTH", "3"))  # Minimum signal strength (1-6)
 
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL),
@@ -158,6 +160,212 @@ def ema_direction(df, length=50):
         return "sell"
     return "flat"
 
+def calculate_rsi(df, period=14):
+    delta = df['close'].diff()
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+    avg_gain = pd.Series(gain).rolling(period).mean()
+    avg_loss = pd.Series(loss).rolling(period).mean()
+    rs = avg_gain / avg_loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    return df
+
+def calculate_bollinger_bands(df, period=20, std_dev=2):
+    """Calculate Bollinger Bands for volatility assessment"""
+    df['bb_middle'] = df['close'].rolling(period).mean()
+    bb_std = df['close'].rolling(period).std()
+    df['bb_upper'] = df['bb_middle'] + (bb_std * std_dev)
+    df['bb_lower'] = df['bb_middle'] - (bb_std * std_dev)
+    df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+    return df
+
+def calculate_support_resistance(df, lookback=20):
+    """Identify key support and resistance levels"""
+    df['support'] = df['low'].rolling(lookback, center=True).min()
+    df['resistance'] = df['high'].rolling(lookback, center=True).max()
+    return df
+
+def is_trending_market(df, ema_fast=20, ema_slow=50):
+    """Determine if market is trending or ranging"""
+    ema_fast_val = df['close'].ewm(span=ema_fast).mean().iloc[-1]
+    ema_slow_val = df['close'].ewm(span=ema_slow).mean().iloc[-1]
+    
+    # Calculate trend strength
+    trend_strength = abs(ema_fast_val - ema_slow_val) / ema_slow_val
+    return trend_strength > 0.002  # 0.2% minimum trend strength
+
+def check_rsi_divergence(df, period=14, lookback=5):
+    """Check for RSI divergence with price action"""
+    if len(df) < lookback + period:
+        return False
+    
+    recent_prices = df['close'].tail(lookback)
+    recent_rsi = df['rsi'].tail(lookback)
+    
+    # Check for bullish divergence (price makes lower lows, RSI makes higher lows)
+    price_trend = recent_prices.iloc[-1] < recent_prices.iloc[0]
+    rsi_trend = recent_rsi.iloc[-1] > recent_rsi.iloc[0]
+    
+    return price_trend != rsi_trend
+
+def is_valid_breakout(df, current_price, lookback=20):
+    """Check if current price represents a valid breakout"""
+    recent_high = df['high'].tail(lookback).max()
+    recent_low = df['low'].tail(lookback).min()
+    
+    # Check if price is breaking above recent resistance or below recent support
+    breakout_up = current_price > recent_high * 1.001  # 0.1% buffer
+    breakout_down = current_price < recent_low * 0.999  # 0.1% buffer
+    
+    return breakout_up or breakout_down
+
+def check_volume_confirmation(df):
+    """Check if recent volume supports the signal (placeholder for volume data)"""
+    # Since MT5 tick volume might not be reliable, we use ATR as proxy for volatility/activity
+    if 'atr' not in df.columns:
+        return True
+    
+    recent_atr = df['atr'].tail(3).mean()
+    avg_atr = df['atr'].tail(20).mean()
+    
+    return recent_atr > avg_atr * 0.8  # Recent activity should be at least 80% of average
+
+def is_trading_session_active():
+    """Check if we're in an active trading session for XAUUSD"""
+    now = datetime.now()
+    current_hour = now.hour
+    
+    # XAUUSD is active during major forex sessions
+    # London: 8-17 GMT, New York: 13-22 GMT, Asian: 22-8 GMT
+    # Convert to approximate local times - this should be adjusted for your timezone
+    active_hours = list(range(1, 9)) + list(range(13, 23))  # Active sessions
+    
+    return current_hour in active_hours
+
+def identify_market_structure(df, lookback=20):
+    """Identify market structure: higher highs/lower lows, break of structure"""
+    if len(df) < lookback + 5:
+        return "unknown", None
+    
+    # Get recent highs and lows
+    recent_data = df.tail(lookback).copy()
+    highs = recent_data['high']
+    lows = recent_data['low']
+    
+    # Find swing highs and lows (peaks and troughs)
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(2, len(recent_data) - 2):
+        # Swing high: higher than 2 candles before and after
+        if (recent_data.iloc[i]['high'] > recent_data.iloc[i-1]['high'] and 
+            recent_data.iloc[i]['high'] > recent_data.iloc[i-2]['high'] and
+            recent_data.iloc[i]['high'] > recent_data.iloc[i+1]['high'] and 
+            recent_data.iloc[i]['high'] > recent_data.iloc[i+2]['high']):
+            swing_highs.append((i, recent_data.iloc[i]['high']))
+        
+        # Swing low: lower than 2 candles before and after  
+        if (recent_data.iloc[i]['low'] < recent_data.iloc[i-1]['low'] and 
+            recent_data.iloc[i]['low'] < recent_data.iloc[i-2]['low'] and
+            recent_data.iloc[i]['low'] < recent_data.iloc[i+1]['low'] and 
+            recent_data.iloc[i]['low'] < recent_data.iloc[i+2]['low']):
+            swing_lows.append((i, recent_data.iloc[i]['low']))
+    
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return "consolidation", None
+    
+    # Analyze trend structure
+    recent_highs = [h[1] for h in swing_highs[-3:]]
+    recent_lows = [l[1] for l in swing_lows[-3:]]
+    
+    # Check for higher highs and higher lows (uptrend)
+    if len(recent_highs) >= 2 and len(recent_lows) >= 2:
+        higher_highs = all(recent_highs[i] < recent_highs[i+1] for i in range(len(recent_highs)-1))
+        higher_lows = all(recent_lows[i] < recent_lows[i+1] for i in range(len(recent_lows)-1))
+        
+        # Check for lower highs and lower lows (downtrend)
+        lower_highs = all(recent_highs[i] > recent_highs[i+1] for i in range(len(recent_highs)-1))
+        lower_lows = all(recent_lows[i] > recent_lows[i+1] for i in range(len(recent_lows)-1))
+        
+        if higher_highs and higher_lows:
+            return "uptrend", swing_highs[-1][1]  # Return last swing high as key level
+        elif lower_highs and lower_lows:
+            return "downtrend", swing_lows[-1][1]  # Return last swing low as key level
+    
+    return "consolidation", None
+
+def check_break_of_structure(df, structure_type, key_level, current_price):
+    """Check if current price represents a break of market structure"""
+    if structure_type == "unknown" or key_level is None:
+        return False
+    
+    # For uptrend, look for break below recent swing low
+    if structure_type == "uptrend":
+        return current_price < key_level * 0.999  # 0.1% buffer
+    
+    # For downtrend, look for break above recent swing high  
+    elif structure_type == "downtrend":
+        return current_price > key_level * 1.001  # 0.1% buffer
+    
+    return False
+
+def calculate_price_momentum(df, period=10):
+    """Calculate price momentum over specified period"""
+    if len(df) < period + 1:
+        return 0
+    
+    current_price = df['close'].iloc[-1]
+    past_price = df['close'].iloc[-(period+1)]
+    
+    momentum = (current_price - past_price) / past_price
+    return momentum
+
+def is_pullback_complete(df, signal_type, lookback=3):
+    """Check if price has completed a healthy pullback for entry - RELAXED VERSION"""
+    if len(df) < lookback + 5:
+        return True  # Allow entry if insufficient data
+    
+    recent_data = df.tail(lookback)
+    older_data = df.tail(lookback + 5).head(5)  # Shorter lookback period
+    
+    # Get current price momentum to determine if pullback is reasonable
+    current_price = df['close'].iloc[-1]
+    ema_short = df['close'].ewm(span=5).mean().iloc[-1]
+    
+    if signal_type == "buy":
+        # For buy signal, allow entry if:
+        # 1. Price is above short EMA (still bullish), OR
+        # 2. Had a minor pullback (0.2% instead of 0.5%), OR
+        # 3. Price action shows buying pressure (recent low > older low)
+        recent_low = recent_data['low'].min()
+        older_low = older_data['low'].min()
+        
+        # More permissive conditions
+        above_ema = current_price >= ema_short * 0.999  # Allow slight below EMA
+        minor_pullback = recent_low < df['high'].tail(10).max() * 0.998  # Only 0.2% pullback required
+        buying_pressure = recent_low >= older_low * 0.998  # Higher lows pattern
+        
+        return above_ema or minor_pullback or buying_pressure
+    
+    elif signal_type == "sell":
+        # For sell signal, allow entry if:
+        # 1. Price is below short EMA (still bearish), OR
+        # 2. Had a minor pullback (0.2% instead of 0.5%), OR
+        # 3. Price action shows selling pressure (recent high < older high)
+        recent_high = recent_data['high'].max()
+        older_high = older_data['high'].max()
+        
+        # More permissive conditions
+        below_ema = current_price <= ema_short * 1.001  # Allow slight above EMA
+        minor_pullback = recent_high > df['low'].tail(10).min() * 1.002  # Only 0.2% pullback required
+        selling_pressure = recent_high <= older_high * 1.002  # Lower highs pattern
+        
+        return below_ema or minor_pullback or selling_pressure
+    
+    return True  # Default to allow if uncertain
+
+# This orphaned backtest code has been removed to fix the main trading logic
+
 # MT5 helpers
 def initialize_mt5():
     if not mt5.initialize():
@@ -265,6 +473,8 @@ def place_market_order(symbol, direction, volume, sl_price, tp_price, deviation=
 def main_loop():
     initialize_mt5()
     confirmer = LLMConfirmer(provider=LLM_PROVIDER, api_key=GROQ_API_KEY if LLM_PROVIDER == "groq" else None)
+    last_trade_time = None  # Track last trade time for cooldown
+    trade_count = 0  # Track number of trades
 
     try:
         while True:
@@ -301,21 +511,166 @@ def main_loop():
                 # indicators
                 df_primary = calculate_macd(df_primary)
                 df_primary = calculate_atr(df_primary)
+                df_primary = calculate_rsi(df_primary)
+                df_primary = calculate_bollinger_bands(df_primary)
+                df_primary = calculate_support_resistance(df_primary)
                 df_c1 = calculate_atr(df_c1)
                 df_c2 = calculate_atr(df_c2)
 
+                # Check if we're in an active trading session
+                if not is_trading_session_active():
+                    logging.debug("Outside active trading hours.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+
+                # Check cooldown period
+                current_time = datetime.now()
+                if last_trade_time and (current_time - last_trade_time).total_seconds() < COOLDOWN_MINUTES * 60:
+                    remaining_cooldown = COOLDOWN_MINUTES * 60 - (current_time - last_trade_time).total_seconds()
+                    logging.debug(f"Cooldown active: {remaining_cooldown/60:.1f} minutes remaining.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+
                 # Primary signal from MACD on latest candle
                 latest = df_primary.iloc[-1]
+                current_price = latest['close']
+                
+                # Enhanced signal detection with multiple confirmations
                 primary_signal = None
+                signal_strength = 0
+                
+                # 1. MACD Cross Signal
                 if latest.get('macd_cross_up', False):
                     primary_signal = "buy"
+                    signal_strength += 1
                 elif latest.get('macd_cross_dn', False):
                     primary_signal = "sell"
-                else:
-                    primary_signal = None
+                    signal_strength += 1
 
                 if primary_signal is None:
                     logging.debug("No primary MACD signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+
+                # 2. Market Structure Confirmation
+                if not is_trending_market(df_primary):
+                    logging.debug("Market is ranging, skipping signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+
+                # 3. RSI Oversold/Overbought Levels (avoid extreme levels)
+                rsi = latest.get('rsi', 50)
+                if primary_signal == "buy" and (rsi < 30 or rsi > 75):
+                    logging.debug(f"RSI {rsi:.2f} not suitable for buy signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                elif primary_signal == "sell" and (rsi > 70 or rsi < 25):
+                    logging.debug(f"RSI {rsi:.2f} not suitable for sell signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                else:
+                    signal_strength += 1
+
+                # 4. Bollinger Band Position
+                bb_upper = latest.get('bb_upper', current_price)
+                bb_lower = latest.get('bb_lower', current_price)
+                bb_middle = latest.get('bb_middle', current_price)
+                
+                if primary_signal == "buy" and current_price > bb_upper:
+                    logging.debug("Price above upper Bollinger Band, avoiding buy.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                elif primary_signal == "sell" and current_price < bb_lower:
+                    logging.debug("Price below lower Bollinger Band, avoiding sell.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                else:
+                    signal_strength += 1
+
+                # 5. Volume/Volatility Confirmation
+                if not check_volume_confirmation(df_primary):
+                    logging.debug("Insufficient volume/volatility for signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                else:
+                    signal_strength += 1
+
+                # 6. Support/Resistance Levels
+                support = latest.get('support', current_price * 0.99)
+                resistance = latest.get('resistance', current_price * 1.01)
+                
+                if primary_signal == "buy" and current_price < support * 1.001:
+                    logging.debug("Price too close to support for buy signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                elif primary_signal == "sell" and current_price > resistance * 0.999:
+                    logging.debug("Price too close to resistance for sell signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                else:
+                    signal_strength += 1
+
+                # Require minimum signal strength (now configurable)
+                if signal_strength < MIN_SIGNAL_STRENGTH:
+                    logging.debug(f"Signal strength {signal_strength}/6 insufficient (min: {MIN_SIGNAL_STRENGTH}).")
+                    sleep(SLEEP_SECONDS)
+                    continue
+
+                logging.info(f"Strong {primary_signal.upper()} signal detected with strength {signal_strength}/6")
+
+                # 7. Market Structure Analysis
+                structure_type, key_level = identify_market_structure(df_primary)
+                logging.info(f"Market structure: {structure_type}, key level: {key_level}")
+                
+                # Check if signal aligns with market structure (RELAXED)
+                if structure_type == "uptrend" and primary_signal == "sell":
+                    # Allow sell signals in uptrend if:
+                    # 1. There's a break of structure, OR
+                    # 2. RSI shows overbought (>70), OR  
+                    # 3. Price is at resistance level
+                    rsi = latest.get('rsi', 50)
+                    resistance = latest.get('resistance', current_price * 1.01)
+                    
+                    break_of_structure = check_break_of_structure(df_primary, structure_type, key_level, current_price)
+                    overbought = rsi > 70
+                    at_resistance = current_price >= resistance * 0.999
+                    
+                    if not (break_of_structure or overbought or at_resistance):
+                        logging.debug("Sell signal against uptrend rejected (no BOS, not overbought, not at resistance).")
+                        sleep(SLEEP_SECONDS)
+                        continue
+                        
+                elif structure_type == "downtrend" and primary_signal == "buy":
+                    # Allow buy signals in downtrend if:
+                    # 1. There's a break of structure, OR
+                    # 2. RSI shows oversold (<30), OR
+                    # 3. Price is at support level
+                    rsi = latest.get('rsi', 50)
+                    support = latest.get('support', current_price * 0.99)
+                    
+                    break_of_structure = check_break_of_structure(df_primary, structure_type, key_level, current_price)
+                    oversold = rsi < 30
+                    at_support = current_price <= support * 1.001
+                    
+                    if not (break_of_structure or oversold or at_support):
+                        logging.debug("Buy signal against downtrend rejected (no BOS, not oversold, not at support).")
+                        sleep(SLEEP_SECONDS)
+                        continue
+                
+                # 8. Check for healthy pullback completion
+                if not is_pullback_complete(df_primary, primary_signal):
+                    logging.debug("Pullback not complete, waiting for better entry.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+
+                # 9. Price momentum confirmation
+                momentum = calculate_price_momentum(df_primary)
+                if primary_signal == "buy" and momentum < -0.001:  # Negative momentum for buy
+                    logging.debug(f"Negative momentum {momentum:.4f} for buy signal.")
+                    sleep(SLEEP_SECONDS)
+                    continue
+                elif primary_signal == "sell" and momentum > 0.001:  # Positive momentum for sell
+                    logging.debug(f"Positive momentum {momentum:.4f} for sell signal.")
                     sleep(SLEEP_SECONDS)
                     continue
 
@@ -323,6 +678,20 @@ def main_loop():
                 trend1 = ema_direction(df_c1, length=50)
                 trend2 = ema_direction(df_c2, length=50)
                 logging.info(f"Primary signal: {primary_signal}. Confirm1: {trend1}, Confirm2: {trend2}")
+                
+                # Enhanced trend confirmation with market structure
+                if structure_type in ["uptrend", "downtrend"]:
+                    # If we have clear market structure, require at least one timeframe alignment
+                    if not (trend1 == primary_signal or trend2 == primary_signal):
+                        logging.debug("No trend alignment with higher timeframes.")
+                        sleep(SLEEP_SECONDS)
+                        continue
+                else:
+                    # For consolidation, require both timeframes to agree
+                    if not (trend1 == trend2 == primary_signal):
+                        logging.debug("Insufficient trend alignment in consolidating market.")
+                        sleep(SLEEP_SECONDS)
+                        continue
 
                 # compute SL using ATR on primary TF
                 atr = df_primary['atr'].iloc[-1] if 'atr' in df_primary.columns else None
@@ -374,14 +743,41 @@ def main_loop():
                     sleep(SLEEP_SECONDS)
                     continue
 
-                # risk sizing
+                # Enhanced risk sizing with dynamic position sizing
                 account = get_account_info()
                 if account is None:
                     logging.error("Account info unavailable.")
                     sleep(SLEEP_SECONDS)
                     continue
                 balance = float(account.balance)
-                risk_amount = balance * RISK_PERCENT
+                
+                # Dynamic risk adjustment based on signal strength and market conditions
+                base_risk = RISK_PERCENT
+                risk_multiplier = 1.0
+                
+                # Increase risk for high-quality signals
+                if signal_strength >= 5:
+                    risk_multiplier *= 1.5
+                elif signal_strength >= 4:
+                    risk_multiplier *= 1.2
+                
+                # Adjust risk based on volatility
+                atr_ratio = atr / df_primary['atr'].tail(50).mean() if not df_primary['atr'].tail(50).empty else 1.0
+                if atr_ratio > 1.5:  # High volatility
+                    risk_multiplier *= 0.7  # Reduce risk
+                elif atr_ratio < 0.7:  # Low volatility
+                    risk_multiplier *= 1.3  # Increase risk slightly
+                
+                # Adjust risk based on market structure confidence
+                if structure_type in ["uptrend", "downtrend"]:
+                    risk_multiplier *= 1.1  # Slightly more confident in trending markets
+                
+                # Apply maximum risk cap
+                adjusted_risk = min(base_risk * risk_multiplier, base_risk * 2.0)  # Max 2x base risk
+                risk_amount = balance * adjusted_risk
+                
+                logging.info(f"Risk adjustment: base={base_risk:.3f}, multiplier={risk_multiplier:.2f}, final={adjusted_risk:.3f}")
+                
                 lot = compute_lot_size(SYMBOL, entry_price, sl_price, risk_amount)
                 if lot <= 0:
                     logging.error("Calculated lot size invalid. Skipping.")
@@ -389,12 +785,18 @@ def main_loop():
                     continue
 
                 logging.info(f"Placing {primary_signal.upper()} order: entry={entry_price:.3f}, SL={sl_price:.3f}, TP={tp_price:.3f}, LOT={lot}")
+                logging.info(f"Trade #{trade_count + 1} - Signal strength: {signal_strength}/6, Market structure: {structure_type}")
 
                 result = place_market_order(SYMBOL, primary_signal, lot, sl_price, tp_price)
                 if result is None:
                     logging.error("Order send returned None.")
                 else:
                     logging.info("Order sent result: %s", result)
+                    # Update trade tracking on successful order
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        last_trade_time = current_time
+                        trade_count += 1
+                        logging.info(f"Trade executed successfully. Total trades today: {trade_count}")
 
                 # Sleep short to avoid duplicate orders
                 sleep(5)
