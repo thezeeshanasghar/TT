@@ -1,0 +1,189 @@
+# tactiq.io free youtube transcript
+# Greatest Smart Money Concepts Indicator (In-Depth Tutorial)
+# https://www.youtube.com/watch/dRFLAWHhy1s
+
+00:00:00.160 we developed the first and most complete
+00:00:02.240 smart money Concepts indicator which
+00:00:04.240 became so popular that it now ranks
+00:00:06.359 within the top 10 indicators of all time
+00:00:08.719 on trading view by taking the most
+00:00:10.639 essential parts of smart money Concepts
+00:00:12.880 Traders can finally perform analysis on
+00:00:15.280 Market structure order blocks and
+00:00:17.600 liquidity concepts with a single
+00:00:19.400 indicator that is completely free and
+00:00:21.720 open source today we'll break down
+00:00:24.359 exactly how this gem works and at the
+00:00:26.480 end of the video show you the best
+00:00:28.279 features and setups to use in real
+00:00:30.000 markets to easily outsmart dumb money oh
+00:00:33.000 you almost had it you got to be quicker
+00:00:35.239 than that at the foundation of this
+00:00:36.680 indicator is Market structure structure
+00:00:39.160 is used as an easy way to detect Trend
+00:00:41.399 changes and validate existing ones using
+00:00:43.680 price action in an uptrend the market
+00:00:45.680 makes higher highs and higher lows but
+00:00:47.840 if a higher low point is broken a red CH
+00:00:50.480 label which stands for change of
+00:00:51.920 character is plotted and this tells us
+00:00:53.680 the market Direction has changed however
+00:00:55.960 if instead of breaking that higher low
+00:00:57.640 point the previous higher high point is
+00:00:59.640 broken toen it signifies that the market
+00:01:01.920 trend is continuing and a BOS label
+00:01:04.360 which stands for break of structure will
+00:01:06.000 be plotted these labels are called
+00:01:07.960 realtime internal structures however
+00:01:11.119 these internal structures often exist
+00:01:13.119 within larger ones if you zoom out
+00:01:15.159 you'll see larger solid lines
+00:01:16.840 representing swing structures these
+00:01:19.119 swing structures work the same as
+00:01:20.840 internal ones but can be used to
+00:01:22.640 determine how significant a directional
+00:01:24.520 change may be for example you can have
+00:01:27.159 an internal bearish change of character
+00:01:29.119 created but but if it's within a larger
+00:01:31.400 bullish swing structure it could be a
+00:01:33.759 sign that the trend change might not be
+00:01:35.399 as significant and you may want to be
+00:01:37.399 cautious if holding trades for a long
+00:01:39.240 time in that direction in addition to
+00:01:41.360 structure the indicator can also detect
+00:01:43.399 equal highs and lows and major price
+00:01:45.360 points such as daily weekly and monthly
+00:01:47.479 levels Traders will often use these
+00:01:49.360 levels together to locate areas of
+00:01:51.079 resting liquidity in this example an
+00:01:53.880 equal low is detected suggesting that
+00:01:56.159 the price is struggling to go lower now
+00:01:58.600 we can see that the price then swept
+00:02:00.640 that daily low which might have been a
+00:02:02.479 pull on liquidity to go higher it's Then
+00:02:04.560 followed by a change of character at
+00:02:06.320 which point could then be traded into
+00:02:08.239 this order block above which also brings
+00:02:10.520 us to the next major part of this
+00:02:12.000 indicator order blocks and fair value
+00:02:14.400 gaps order blocks are areas in the
+00:02:16.440 market where there is significant buying
+00:02:18.200 and selling activity and when the price
+00:02:20.360 returns to these levels there's often a
+00:02:22.400 strong reaction the indicator will show
+00:02:24.319 you bullish order blocks in blue and
+00:02:26.440 bearish in red and you can use these
+00:02:28.640 areas to take profit or exit your trades
+00:02:31.200 just like with Market structure you can
+00:02:33.120 detect more significant blocks by
+00:02:34.800 enabling swing order blocks a Trader may
+00:02:37.200 choose to use internal order blocks to
+00:02:39.080 enter trades and more significant swing
+00:02:41.159 order blocks as areas to exit fair value
+00:02:43.920 gaps can also be enabled and these are
+00:02:45.879 imbalances within the price that needs
+00:02:47.480 to be filled price will gravitate
+00:02:49.319 towards them and they're often used to
+00:02:51.000 find more precise areas within a
+00:02:52.760 retracement to enter a trade the
+00:02:54.640 indicator also includes a premium and
+00:02:56.640 discount feature which can help detect
+00:02:58.560 regions of supply and demand in the
+00:03:00.239 market so if you're thinking about
+00:03:02.239 taking a Buy trade but the price is
+00:03:04.200 above the equilibrium you may want to
+00:03:06.200 wait for a pullback to the discount Zone
+00:03:08.040 before entering saving you from getting
+00:03:09.760 stopped out in the retracement these are
+00:03:11.760 the major features within this indicator
+00:03:13.720 and many of these features can be
+00:03:15.000 adjusted so Traders can find just the
+00:03:16.920 right fit for their trading style since
+00:03:19.000 the release of this indicator we've seen
+00:03:21.200 tons of videos and users attempting to
+00:03:23.159 use it by blindly taking trades at
+00:03:25.159 change of characters or break of
+00:03:26.879 structure points if you blindly execute
+00:03:29.400 at these levels you will inevitably fail
+00:03:31.680 as a Trader Traders are supposed to use
+00:03:33.799 this tool alongside their analysis and
+00:03:35.680 other complimentary indicators before
+00:03:37.439 executing any trade so with that said
+00:03:39.920 let's explore some of our favorite trade
+00:03:41.720 setups using this indicator in this
+00:03:43.720 example notice how the price is
+00:03:45.400 currently bearish we know this from
+00:03:47.159 seeing a bearish change of character and
+00:03:48.879 a bearish break of structure label
+00:03:51.000 however if we zoom out we also see that
+00:03:53.239 the swing structure is bullish this
+00:03:55.159 could indicate that the current internal
+00:03:56.720 structure change may be a retracement of
+00:03:58.680 a much larger move but if it is a
+00:04:00.799 retracement when and where is it likely
+00:04:03.400 to reverse and continue bullish let's
+00:04:05.760 perform some volume analysis on this
+00:04:07.560 entire structure to determine that now
+00:04:10.360 any volume profile tool will work but
+00:04:12.560 this volume tool not only shows where
+00:04:14.200 the most volume is but also whether
+00:04:16.040 Traders have more bullish or bearish
+00:04:17.680 sentiment within that region this
+00:04:19.358 indicator is the money flow profile and
+00:04:21.238 it's completely free now we see that
+00:04:23.360 majority of trading happened within this
+00:04:25.240 price level and also notice how there is
+00:04:27.280 significantly more bullish sentiment
+00:04:29.039 within that price region now as price
+00:04:31.080 trades into this level we don't just
+00:04:32.800 execute we wait to see its reaction to
+00:04:35.160 that level and now that we're seeing
+00:04:36.639 larger bullish candles rejecting this
+00:04:38.800 level and also notice that price has
+00:04:40.639 swept the previous week's low we now
+00:04:42.680 have quite a number of reasons to expect
+00:04:44.440 a bullish move from this region in this
+00:04:46.759 other example notice how the structure
+00:04:48.759 is bearish and the price has retraced
+00:04:50.520 into the swing order block now if we
+00:04:52.880 enable premium and discount zones we can
+00:04:55.160 see the price is above the equilibrium
+00:04:57.280 which is where you want it to be for
+00:04:58.520 sell trades we also see that there was a
+00:05:00.600 bearish equal High plotted which is the
+00:05:02.720 first sign of a possible reversal if we
+00:05:04.840 now enable fair value gaps we can set a
+00:05:07.080 limit order at that fair value Gap since
+00:05:09.039 the structure is still bearish to get an
+00:05:10.840 amazing sell trade the smart money
+00:05:13.000 Concepts indicator is now fully
+00:05:14.639 available for free on five different
+00:05:16.720 platforms if using it on trading view a
+00:05:19.120 common issue with this indicator is that
+00:05:20.720 when candle coloring is enabled it only
+00:05:22.840 changes the colors if the indicator is
+00:05:25.240 selected an easy way to solve this issue
+00:05:27.319 is to move the indicator above the
+00:05:28.840 candles in the layer panel this issue
+00:05:30.800 was fixed in the premium version of this
+00:05:32.560 indicator the price action Concepts
+00:05:34.720 toolkit we also improved the order
+00:05:36.560 blocks to provide volumetric data
+00:05:38.680 multi-timeframe order blocks trend lines
+00:05:41.479 chart patterns several different types
+00:05:43.240 of imbalances and much more this version
+00:05:45.919 of the indicator is constantly updated
+00:05:47.880 as we integrate new features based on
+00:05:49.759 user feedback and you can try it for 30
+00:05:51.800 days at Lux algo.com we hope you enjoyed
+00:05:54.800 this video and now have a better
+00:05:56.560 understanding of how to use this
+00:05:57.680 indicator you can get access to this
+00:05:59.360 indic indicator for free within the Lux
+00:06:01.039 algo Library by searching smart money
+00:06:03.039 Concepts let us know in the comments
+00:06:05.000 what indicator you would like us to
+00:06:06.400 cover next and don't forget to join our
+00:06:08.280 Discord Community to provide feedback
+00:06:10.400 thank you for watching and until next
+00:06:12.240 time

@@ -1,0 +1,25 @@
+Mar 13, 2020
+SuperTrend is one of the most common ATR based trailing stop indicators.
+
+In this version you can change the ATR calculation method from the settings. Default method is RMA, when the alternative method is SMA.
+
+
+The indicator is easy to use and gives an accurate reading about an ongoing trend. It is constructed with two parameters, namely period and multiplier. The default values used while constructing a superindicator are 10 for average true range or trading period and three for its multiplier.
+
+The average true range (ATR) plays an important role in 'Supertrend' as the indicator uses ATR to calculate its value. The ATR indicator signals the degree of price volatility.
+
+The buy and sell signals are generated when the indicator starts plotting either on top of the closing price or below the closing price. A buy signal is generated when the ‘Supertrend’ closes above the price and a sell signal is generated when it closes below the closing price.
+
+It also suggests that the trend is shifting from descending mode to ascending mode. Contrary to this, when a ‘Supertrend’ closes above the price, it generates a sell signal as the colour of the indicator changes into red.
+
+A ‘Supertrend’ indicator can be used on equities, futures or forex, or even crypto markets and also on daily, weekly and hourly charts as well, but generally, it fails in a sideways-moving market.
+
+I had converted Supertrend indicator code for various platforms like Metastock in 2017, but in this TradingView version special credit goes to everget - Alex Orekhov which gave a great inspiration to look my indicators better with highlights, signals and alarms. Thank you Alex.
+Apr 6, 2020
+Release Notes
+source function added to use the indicator as the ATR Trailing Stop indicator.
+Just change source type hl2 to close.
+different variations might be useful.
+Feb 17, 2021
+Release Notes
+added Multiple Time Frame feature

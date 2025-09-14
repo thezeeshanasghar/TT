@@ -1,0 +1,7 @@
+MetaTrader5
+pandas
+numpy
+langchain-groq
+streamlit
+matplotlib
+python-dotenv
