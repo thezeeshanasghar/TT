@@ -70,16 +70,21 @@ TF_MAP = {
 
 # LLM prompt templates (lightweight) - for confirmation only
 LLM_CONFIRM_PROMPT = """
-You are an institutional XAUUSD assistant. Given the following structured facts, reply ONLY with CONFIRM or REJECT and a short reason (<=30 words).
+You are an institutional XAUUSD assistant using Smart Money Concepts. Given the following data, reply ONLY with CONFIRM or REJECT and a short reason (<=30 words).
 
-Primary Signal: {primary_signal}
+Primary Signal: {primary_signal} (Strength: {signal_strength})
+Signal Reasons: {signal_reasons}
+SuperTrend: {supertrend} (1=bullish, -1=bearish)
+Market Structure: {market_structure}
+BOS/CHoCH: {bos_choch}
+Order Blocks nearby: {order_blocks}
 Primary TF candles (last 8): {primary_data}
 Confirm TF1 (recent direction): {confirm1}
 Confirm TF2 (recent direction): {confirm2}
 Current Spread: {spread}
 Risk Params: SL distance {sl_dist:.4f}, ATR {atr:.4f}, RR target {min_rr}
 
-Rules: Confirm only if trend alignment is present and price respects support/resistance and spread acceptable.
+Rules: Confirm only if signal has strong SMC confluence, trend alignment, and acceptable risk parameters.
 """
 
 class LLMConfirmer:
@@ -183,6 +188,67 @@ def calculate_support_resistance(df, lookback=20):
     """Identify key support and resistance levels"""
     df['support'] = df['low'].rolling(lookback, center=True).min()
     df['resistance'] = df['high'].rolling(lookback, center=True).max()
+    return df
+
+def calculate_supertrend(df, period=10, multiplier=3.0):
+    """Calculate SuperTrend indicator - a powerful trend following indicator"""
+    df = df.copy()
+    
+    # Calculate ATR
+    df['tr'] = np.maximum(df['high'] - df['low'],
+                          np.maximum(abs(df['high'] - df['close'].shift(1)),
+                                     abs(df['low'] - df['close'].shift(1))))
+    df['atr'] = df['tr'].rolling(period).mean()
+    
+    # HL2 (High + Low)/2
+    hl2 = (df['high'] + df['low']) / 2
+    
+    # Calculate SuperTrend bands
+    df['up_band'] = hl2 - (multiplier * df['atr'])
+    df['down_band'] = hl2 + (multiplier * df['atr'])
+    
+    # Initialize SuperTrend values
+    df['supertrend'] = 0.0
+    df['supertrend_signal'] = 0
+    
+    for i in range(period, len(df)):
+        # Update bands based on previous values
+        if df['close'].iloc[i-1] > df['up_band'].iloc[i-1]:
+            df.loc[df.index[i], 'up_band'] = max(df['up_band'].iloc[i], df['up_band'].iloc[i-1])
+        
+        if df['close'].iloc[i-1] < df['down_band'].iloc[i-1]:
+            df.loc[df.index[i], 'down_band'] = min(df['down_band'].iloc[i], df['down_band'].iloc[i-1])
+        
+        # Determine trend
+        if i == period:
+            if df['close'].iloc[i] <= df['up_band'].iloc[i]:
+                df.loc[df.index[i], 'supertrend'] = df['up_band'].iloc[i]
+                df.loc[df.index[i], 'supertrend_signal'] = -1
+            else:
+                df.loc[df.index[i], 'supertrend'] = df['down_band'].iloc[i]
+                df.loc[df.index[i], 'supertrend_signal'] = 1
+        else:
+            # Previous trend was bullish
+            if df['supertrend_signal'].iloc[i-1] == 1:
+                if df['close'].iloc[i] <= df['down_band'].iloc[i]:
+                    df.loc[df.index[i], 'supertrend'] = df['down_band'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_signal'] = -1
+                else:
+                    df.loc[df.index[i], 'supertrend'] = df['up_band'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_signal'] = 1
+            # Previous trend was bearish
+            else:
+                if df['close'].iloc[i] >= df['up_band'].iloc[i]:
+                    df.loc[df.index[i], 'supertrend'] = df['up_band'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_signal'] = 1
+                else:
+                    df.loc[df.index[i], 'supertrend'] = df['down_band'].iloc[i]
+                    df.loc[df.index[i], 'supertrend_signal'] = -1
+    
+    # Detect SuperTrend signals
+    df['supertrend_buy'] = (df['supertrend_signal'] == 1) & (df['supertrend_signal'].shift(1) == -1)
+    df['supertrend_sell'] = (df['supertrend_signal'] == -1) & (df['supertrend_signal'].shift(1) == 1)
+    
     return df
 
 def is_trending_market(df, ema_fast=20, ema_slow=50):
@@ -319,6 +385,193 @@ def calculate_price_momentum(df, period=10):
     
     momentum = (current_price - past_price) / past_price
     return momentum
+
+def detect_order_blocks(df, lookback=50, internal=False):
+    """Detect order blocks based on Smart Money Concepts"""
+    order_blocks = []
+    
+    # Identify swing highs and lows
+    for i in range(2, len(df) - 2):
+        # Swing high: higher than 2 candles before and after
+        if (df.iloc[i]['high'] > df.iloc[i-1]['high'] and 
+            df.iloc[i]['high'] > df.iloc[i-2]['high'] and
+            df.iloc[i]['high'] > df.iloc[i+1]['high'] and 
+            df.iloc[i]['high'] > df.iloc[i+2]['high']):
+            
+            # Look for the last down candle before the swing high (bearish OB)
+            for j in range(i-1, max(0, i-10), -1):
+                if df.iloc[j]['close'] < df.iloc[j]['open']:
+                    order_blocks.append({
+                        'type': 'bearish',
+                        'top': df.iloc[j]['high'],
+                        'bottom': df.iloc[j]['low'],
+                        'time': df.iloc[j]['time'],
+                        'index': j,
+                        'internal': internal
+                    })
+                    break
+        
+        # Swing low: lower than 2 candles before and after  
+        if (df.iloc[i]['low'] < df.iloc[i-1]['low'] and 
+            df.iloc[i]['low'] < df.iloc[i-2]['low'] and
+            df.iloc[i]['low'] < df.iloc[i+1]['low'] and 
+            df.iloc[i]['low'] < df.iloc[i+2]['low']):
+            
+            # Look for the last up candle before the swing low (bullish OB)
+            for j in range(i-1, max(0, i-10), -1):
+                if df.iloc[j]['close'] > df.iloc[j]['open']:
+                    order_blocks.append({
+                        'type': 'bullish',
+                        'top': df.iloc[j]['high'],
+                        'bottom': df.iloc[j]['low'],
+                        'time': df.iloc[j]['time'],
+                        'index': j,
+                        'internal': internal
+                    })
+                    break
+    
+    # Keep only the most recent order blocks
+    order_blocks = sorted(order_blocks, key=lambda x: x['index'], reverse=True)[:5]
+    return order_blocks
+
+def detect_fair_value_gaps(df, threshold_multiplier=1.5):
+    """Detect Fair Value Gaps (FVG) - price inefficiencies"""
+    fvgs = []
+    
+    if len(df) < 3:
+        return fvgs
+    
+    # Calculate average candle range for threshold
+    avg_range = df['high'].rolling(20).mean() - df['low'].rolling(20).mean()
+    
+    for i in range(2, len(df)):
+        # Bullish FVG: gap between candle[i-2] high and candle[i] low
+        gap_size = df.iloc[i]['low'] - df.iloc[i-2]['high']
+        if gap_size > 0 and gap_size > avg_range.iloc[i] * 0.1:  # Minimum 10% of average range
+            fvgs.append({
+                'type': 'bullish',
+                'top': df.iloc[i]['low'],
+                'bottom': df.iloc[i-2]['high'],
+                'index': i,
+                'size': gap_size
+            })
+        
+        # Bearish FVG: gap between candle[i-2] low and candle[i] high
+        gap_size = df.iloc[i-2]['low'] - df.iloc[i]['high']
+        if gap_size > 0 and gap_size > avg_range.iloc[i] * 0.1:
+            fvgs.append({
+                'type': 'bearish',
+                'top': df.iloc[i-2]['low'],
+                'bottom': df.iloc[i]['high'],
+                'index': i,
+                'size': gap_size
+            })
+    
+    return fvgs
+
+def detect_break_of_structure(df, lookback=20):
+    """Detect Break of Structure (BOS) and Change of Character (CHoCH)"""
+    if len(df) < lookback + 5:
+        return None, None
+    
+    # Find recent swing highs and lows
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(2, len(df) - 2):
+        # Swing high
+        if (df.iloc[i]['high'] > df.iloc[i-1]['high'] and 
+            df.iloc[i]['high'] > df.iloc[i-2]['high'] and
+            df.iloc[i]['high'] > df.iloc[i+1]['high'] and 
+            df.iloc[i]['high'] > df.iloc[i+2]['high']):
+            swing_highs.append((i, df.iloc[i]['high']))
+        
+        # Swing low
+        if (df.iloc[i]['low'] < df.iloc[i-1]['low'] and 
+            df.iloc[i]['low'] < df.iloc[i-2]['low'] and
+            df.iloc[i]['low'] < df.iloc[i+1]['low'] and 
+            df.iloc[i]['low'] < df.iloc[i+2]['low']):
+            swing_lows.append((i, df.iloc[i]['low']))
+    
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return None, None
+    
+    # Check for BOS/CHoCH
+    last_high = swing_highs[-1][1]
+    prev_high = swing_highs[-2][1]
+    last_low = swing_lows[-1][1]
+    prev_low = swing_lows[-2][1]
+    current_close = df.iloc[-1]['close']
+    
+    # Bullish BOS: Higher high and higher low
+    if last_high > prev_high and last_low > prev_low:
+        if current_close > last_high:
+            return 'bullish_bos', last_high
+    
+    # Bearish BOS: Lower high and lower low
+    if last_high < prev_high and last_low < prev_low:
+        if current_close < last_low:
+            return 'bearish_bos', last_low
+    
+    # Bullish CHoCH: Was in downtrend, now breaking above
+    if last_high < prev_high and current_close > last_high:
+        return 'bullish_choch', last_high
+    
+    # Bearish CHoCH: Was in uptrend, now breaking below
+    if last_low > prev_low and current_close < last_low:
+        return 'bearish_choch', last_low
+    
+    return None, None
+
+def detect_equal_highs_lows(df, lookback=20, threshold=0.001):
+    """Detect equal highs and equal lows for better S/R detection"""
+    if len(df) < lookback:
+        return [], []
+    
+    recent_data = df.tail(lookback)
+    highs = recent_data['high'].values
+    lows = recent_data['low'].values
+    
+    equal_highs = []
+    equal_lows = []
+    
+    # Find equal highs
+    for i in range(len(highs)):
+        for j in range(i + 1, len(highs)):
+            if abs(highs[i] - highs[j]) / highs[i] < threshold:
+                equal_highs.append((highs[i], i, j))
+    
+    # Find equal lows
+    for i in range(len(lows)):
+        for j in range(i + 1, len(lows)):
+            if abs(lows[i] - lows[j]) / lows[i] < threshold:
+                equal_lows.append((lows[i], i, j))
+    
+    return equal_highs, equal_lows
+
+def detect_premium_discount_zones(df, lookback=50):
+    """Detect premium, discount, and equilibrium zones based on recent price range"""
+    if len(df) < lookback:
+        return None, None, None
+    
+    # Get recent high and low
+    recent_high = df['high'].tail(lookback).max()
+    recent_low = df['low'].tail(lookback).min()
+    
+    # Calculate zones
+    range_size = recent_high - recent_low
+    equilibrium = (recent_high + recent_low) / 2
+    
+    # Premium zone: Top 25% of range
+    premium_zone = (recent_high - range_size * 0.25, recent_high)
+    
+    # Discount zone: Bottom 25% of range  
+    discount_zone = (recent_low, recent_low + range_size * 0.25)
+    
+    # Equilibrium zone: Middle 10% of range
+    equilibrium_zone = (equilibrium - range_size * 0.05, equilibrium + range_size * 0.05)
+    
+    return premium_zone, discount_zone, equilibrium_zone
 
 def is_pullback_complete(df, signal_type, lookback=3):
     """Check if price has completed a healthy pullback for entry - RELAXED VERSION"""
@@ -514,8 +767,16 @@ def main_loop():
                 df_primary = calculate_rsi(df_primary)
                 df_primary = calculate_bollinger_bands(df_primary)
                 df_primary = calculate_support_resistance(df_primary)
+                df_primary = calculate_supertrend(df_primary)  # Add SuperTrend
                 df_c1 = calculate_atr(df_c1)
                 df_c2 = calculate_atr(df_c2)
+                
+                # Smart Money Concepts
+                order_blocks = detect_order_blocks(df_primary)
+                fvgs = detect_fair_value_gaps(df_primary)
+                bos_choch, bos_level = detect_break_of_structure(df_primary)
+                equal_highs, equal_lows = detect_equal_highs_lows(df_primary)
+                premium_zone, discount_zone, equilibrium_zone = detect_premium_discount_zones(df_primary)
 
                 # Check if we're in an active trading session
                 if not is_trading_session_active():
@@ -538,17 +799,57 @@ def main_loop():
                 # Enhanced signal detection with multiple confirmations
                 primary_signal = None
                 signal_strength = 0
+                signal_reasons = []
                 
                 # 1. MACD Cross Signal
                 if latest.get('macd_cross_up', False):
                     primary_signal = "buy"
                     signal_strength += 1
+                    signal_reasons.append("MACD bullish cross")
                 elif latest.get('macd_cross_dn', False):
                     primary_signal = "sell"
                     signal_strength += 1
+                    signal_reasons.append("MACD bearish cross")
+                
+                # 2. SuperTrend Signal (Strong confirmation)
+                if latest.get('supertrend_buy', False):
+                    if primary_signal == "buy":
+                        signal_strength += 2  # Strong confirmation
+                        signal_reasons.append("SuperTrend buy signal")
+                    elif primary_signal is None:
+                        primary_signal = "buy"
+                        signal_strength += 1
+                        signal_reasons.append("SuperTrend buy signal")
+                elif latest.get('supertrend_sell', False):
+                    if primary_signal == "sell":
+                        signal_strength += 2  # Strong confirmation
+                        signal_reasons.append("SuperTrend sell signal")
+                    elif primary_signal is None:
+                        primary_signal = "sell"
+                        signal_strength += 1
+                        signal_reasons.append("SuperTrend sell signal")
+                
+                # 3. Break of Structure / Change of Character (Very strong signal)
+                if bos_choch:
+                    if bos_choch == 'bullish_bos' and primary_signal == "buy":
+                        signal_strength += 2
+                        signal_reasons.append("Bullish Break of Structure")
+                    elif bos_choch == 'bearish_bos' and primary_signal == "sell":
+                        signal_strength += 2
+                        signal_reasons.append("Bearish Break of Structure")
+                    elif bos_choch == 'bullish_choch':
+                        if primary_signal != "sell":  # Don't fight CHoCH
+                            primary_signal = "buy"
+                            signal_strength += 3  # Very strong signal
+                            signal_reasons.append("Bullish Change of Character")
+                    elif bos_choch == 'bearish_choch':
+                        if primary_signal != "buy":  # Don't fight CHoCH
+                            primary_signal = "sell"
+                            signal_strength += 3  # Very strong signal
+                            signal_reasons.append("Bearish Change of Character")
 
                 if primary_signal is None:
-                    logging.debug("No primary MACD signal.")
+                    logging.debug("No primary signal detected.")
                     sleep(SLEEP_SECONDS)
                     continue
 
@@ -609,14 +910,97 @@ def main_loop():
                     continue
                 else:
                     signal_strength += 1
+                    signal_reasons.append("Good S/R positioning")
+                
+                # 7. Order Block Confirmation (Smart Money Concepts)
+                valid_order_block = False
+                for ob in order_blocks:
+                    if primary_signal == "buy" and ob['type'] == 'bullish':
+                        # Check if price is near bullish order block
+                        if ob['bottom'] <= current_price <= ob['top'] * 1.01:
+                            signal_strength += 2
+                            signal_reasons.append("At bullish order block")
+                            valid_order_block = True
+                            break
+                    elif primary_signal == "sell" and ob['type'] == 'bearish':
+                        # Check if price is near bearish order block
+                        if ob['bottom'] * 0.99 <= current_price <= ob['top']:
+                            signal_strength += 2
+                            signal_reasons.append("At bearish order block")
+                            valid_order_block = True
+                            break
+                
+                # 8. Fair Value Gap Confirmation
+                fvg_support = False
+                for fvg in fvgs[-5:]:  # Check last 5 FVGs
+                    if primary_signal == "buy" and fvg['type'] == 'bullish':
+                        # Check if price is in or near bullish FVG
+                        if fvg['bottom'] <= current_price <= fvg['top'] * 1.02:
+                            signal_strength += 1
+                            signal_reasons.append("Bullish FVG support")
+                            fvg_support = True
+                            break
+                    elif primary_signal == "sell" and fvg['type'] == 'bearish':
+                        # Check if price is in or near bearish FVG
+                        if fvg['bottom'] * 0.98 <= current_price <= fvg['top']:
+                            signal_strength += 1
+                            signal_reasons.append("Bearish FVG resistance")
+                            fvg_support = True
+                            break
+                
+                # 9. Equal Highs/Lows Confirmation
+                if equal_highs and primary_signal == "sell":
+                    # Check if we're near equal highs (resistance)
+                    for eq_high in equal_highs[-3:]:
+                        if abs(current_price - eq_high[0]) / current_price < 0.002:
+                            signal_strength += 1
+                            signal_reasons.append("At equal highs resistance")
+                            break
+                elif equal_lows and primary_signal == "buy":
+                    # Check if we're near equal lows (support)
+                    for eq_low in equal_lows[-3:]:
+                        if abs(current_price - eq_low[0]) / current_price < 0.002:
+                            signal_strength += 1
+                            signal_reasons.append("At equal lows support")
+                            break
+                
+                # 10. Premium/Discount Zone Confirmation (Smart Money Concepts)
+                if premium_zone and discount_zone and equilibrium_zone:
+                    # Buy signals are stronger in discount zone
+                    if primary_signal == "buy":
+                        if discount_zone[0] <= current_price <= discount_zone[1]:
+                            signal_strength += 2
+                            signal_reasons.append("In discount zone (optimal buy)")
+                        elif equilibrium_zone[0] <= current_price <= equilibrium_zone[1]:
+                            signal_strength += 1
+                            signal_reasons.append("At equilibrium (fair value)")
+                        elif premium_zone[0] <= current_price <= premium_zone[1]:
+                            # Buying in premium zone is risky
+                            signal_strength -= 1
+                            signal_reasons.append("In premium zone (risky buy)")
+                    
+                    # Sell signals are stronger in premium zone
+                    elif primary_signal == "sell":
+                        if premium_zone[0] <= current_price <= premium_zone[1]:
+                            signal_strength += 2
+                            signal_reasons.append("In premium zone (optimal sell)")
+                        elif equilibrium_zone[0] <= current_price <= equilibrium_zone[1]:
+                            signal_strength += 1
+                            signal_reasons.append("At equilibrium (fair value)")
+                        elif discount_zone[0] <= current_price <= discount_zone[1]:
+                            # Selling in discount zone is risky
+                            signal_strength -= 1
+                            signal_reasons.append("In discount zone (risky sell)")
 
                 # Require minimum signal strength (now configurable)
+                max_possible_strength = 12  # Updated max strength with new indicators
                 if signal_strength < MIN_SIGNAL_STRENGTH:
-                    logging.debug(f"Signal strength {signal_strength}/6 insufficient (min: {MIN_SIGNAL_STRENGTH}).")
+                    logging.debug(f"Signal strength {signal_strength}/{max_possible_strength} insufficient (min: {MIN_SIGNAL_STRENGTH}). Reasons: {', '.join(signal_reasons)}")
                     sleep(SLEEP_SECONDS)
                     continue
 
-                logging.info(f"Strong {primary_signal.upper()} signal detected with strength {signal_strength}/6")
+                logging.info(f"Strong {primary_signal.upper()} signal detected with strength {signal_strength}/{max_possible_strength}")
+                logging.info(f"Signal reasons: {', '.join(signal_reasons)}")
 
                 # 7. Market Structure Analysis
                 structure_type, key_level = identify_market_structure(df_primary)
@@ -732,7 +1116,13 @@ def main_loop():
                     "spread": spread,
                     "sl_dist": sl_distance,
                     "atr": atr,
-                    "min_rr": MIN_RR
+                    "min_rr": MIN_RR,
+                    "signal_strength": signal_strength,
+                    "signal_reasons": signal_reasons,
+                    "supertrend": latest.get('supertrend_signal', 0),
+                    "bos_choch": bos_choch if bos_choch else "none",
+                    "order_blocks": len([ob for ob in order_blocks if ob['type'] == 'bullish' if primary_signal == 'buy' else ob['type'] == 'bearish']),
+                    "market_structure": structure_type
                 }
 
                 llm_result = confirmer.confirm(context)
@@ -755,11 +1145,19 @@ def main_loop():
                 base_risk = RISK_PERCENT
                 risk_multiplier = 1.0
                 
-                # Increase risk for high-quality signals
-                if signal_strength >= 5:
+                # Increase risk for high-quality signals (adjusted for new max strength)
+                if signal_strength >= 8:  # Very strong signal with SMC confluence
+                    risk_multiplier *= 1.8
+                elif signal_strength >= 6:  # Strong signal
                     risk_multiplier *= 1.5
-                elif signal_strength >= 4:
+                elif signal_strength >= 4:  # Good signal
                     risk_multiplier *= 1.2
+                
+                # Extra boost for specific high-confidence setups
+                if bos_choch and ('CHoCH' in bos_choch):
+                    risk_multiplier *= 1.2  # Change of Character is very strong
+                if valid_order_block and fvg_support:
+                    risk_multiplier *= 1.1  # Both SMC concepts align
                 
                 # Adjust risk based on volatility
                 atr_ratio = atr / df_primary['atr'].tail(50).mean() if not df_primary['atr'].tail(50).empty else 1.0
@@ -785,7 +1183,8 @@ def main_loop():
                     continue
 
                 logging.info(f"Placing {primary_signal.upper()} order: entry={entry_price:.3f}, SL={sl_price:.3f}, TP={tp_price:.3f}, LOT={lot}")
-                logging.info(f"Trade #{trade_count + 1} - Signal strength: {signal_strength}/6, Market structure: {structure_type}")
+                logging.info(f"Trade #{trade_count + 1} - Signal strength: {signal_strength}/{max_possible_strength}, Market structure: {structure_type}")
+                logging.info(f"SMC Analysis: BOS/CHoCH={bos_choch}, Order Blocks={len(order_blocks)}, FVGs={len(fvgs)}, SuperTrend={latest.get('supertrend_signal', 'N/A')}")
 
                 result = place_market_order(SYMBOL, primary_signal, lot, sl_price, tp_price)
                 if result is None:

@@ -12,10 +12,12 @@ load_dotenv()
 # Import all functions from hybrid_bot3.py
 from hybrid_bot3 import (
     calculate_macd, calculate_atr, calculate_rsi, calculate_bollinger_bands,
-    calculate_support_resistance, ema_direction, is_trending_market,
+    calculate_support_resistance, calculate_supertrend, ema_direction, is_trending_market,
     check_rsi_divergence, is_valid_breakout, check_volume_confirmation,
     is_trading_session_active, identify_market_structure, check_break_of_structure,
-    calculate_price_momentum, is_pullback_complete
+    calculate_price_momentum, is_pullback_complete,
+    detect_order_blocks, detect_fair_value_gaps, detect_break_of_structure,
+    detect_equal_highs_lows, detect_premium_discount_zones
 )
 
 # Use environment variables
@@ -54,6 +56,7 @@ def calculate_all_indicators(df):
     df = calculate_rsi(df)
     df = calculate_bollinger_bands(df)
     df = calculate_support_resistance(df)
+    df = calculate_supertrend(df)  # Add SuperTrend
     return df
 
 def get_timeframe_multiplier(primary_tf, confirm_tf):
@@ -64,62 +67,207 @@ def get_timeframe_multiplier(primary_tf, confirm_tf):
     }
     return tf_minutes[confirm_tf] // tf_minutes[primary_tf]
 
-def evaluate_signal_strength(latest, df_primary, current_price):
-    """Implement the 6-point signal scoring system"""
-    signal_strength = 1  # Start with 1 for MACD cross
-    signal_details = {'macd_cross': True}
+def evaluate_signal_strength_smc(latest, df_primary, current_price, primary_signal, 
+                                order_blocks, fvgs, bos_choch, equal_highs, equal_lows,
+                                premium_zone, discount_zone, equilibrium_zone):
+    """Enhanced signal strength evaluation with SMC concepts (12+ point system)"""
+    signal_strength = 0
+    signal_reasons = []
+    signal_details = {}
     
-    # 2. Market Structure
+    # 1. MACD Cross (already detected, so we count it)
+    signal_strength += 1
+    signal_reasons.append("MACD cross")
+    signal_details['macd_cross'] = True
+    
+    # 2. SuperTrend Confirmation (Strong signal)
+    if latest.get('supertrend_buy', False) and primary_signal == "buy":
+        signal_strength += 2
+        signal_reasons.append("SuperTrend buy signal")
+        signal_details['supertrend_aligned'] = True
+    elif latest.get('supertrend_sell', False) and primary_signal == "sell":
+        signal_strength += 2
+        signal_reasons.append("SuperTrend sell signal")
+        signal_details['supertrend_aligned'] = True
+    elif latest.get('supertrend_signal', 0) == 1 and primary_signal == "buy":
+        signal_strength += 1
+        signal_reasons.append("SuperTrend bullish")
+        signal_details['supertrend_aligned'] = True
+    elif latest.get('supertrend_signal', 0) == -1 and primary_signal == "sell":
+        signal_strength += 1
+        signal_reasons.append("SuperTrend bearish")
+        signal_details['supertrend_aligned'] = True
+    else:
+        signal_details['supertrend_aligned'] = False
+    
+    # 3. Break of Structure / Change of Character
+    if bos_choch:
+        if bos_choch == 'bullish_bos' and primary_signal == "buy":
+            signal_strength += 2
+            signal_reasons.append("Bullish BOS")
+            signal_details['bos_choch'] = 'bullish_bos'
+        elif bos_choch == 'bearish_bos' and primary_signal == "sell":
+            signal_strength += 2
+            signal_reasons.append("Bearish BOS")
+            signal_details['bos_choch'] = 'bearish_bos'
+        elif bos_choch == 'bullish_choch' and primary_signal == "buy":
+            signal_strength += 3
+            signal_reasons.append("Bullish CHoCH")
+            signal_details['bos_choch'] = 'bullish_choch'
+        elif bos_choch == 'bearish_choch' and primary_signal == "sell":
+            signal_strength += 3
+            signal_reasons.append("Bearish CHoCH")
+            signal_details['bos_choch'] = 'bearish_choch'
+    
+    # 4. Market Structure
     if is_trending_market(df_primary):
         signal_strength += 1
+        signal_reasons.append("Trending market")
         signal_details['trending_market'] = True
     else:
         signal_details['trending_market'] = False
     
-    # 3. RSI Levels
+    # 5. RSI Levels
     rsi = latest.get('rsi', 50)
-    if 30 <= rsi <= 70:
+    if primary_signal == "buy" and 30 <= rsi <= 70:
         signal_strength += 1
+        signal_reasons.append(f"RSI good ({rsi:.1f})")
+        signal_details['rsi_good'] = True
+    elif primary_signal == "sell" and 30 <= rsi <= 70:
+        signal_strength += 1
+        signal_reasons.append(f"RSI good ({rsi:.1f})")
         signal_details['rsi_good'] = True
     else:
         signal_details['rsi_good'] = False
     signal_details['rsi_value'] = rsi
     
-    # 4. Bollinger Band Position
+    # 6. Bollinger Band Position
     bb_upper = latest.get('bb_upper', current_price)
     bb_lower = latest.get('bb_lower', current_price)
-    if bb_lower < current_price < bb_upper:
+    if primary_signal == "buy" and current_price < bb_upper:
         signal_strength += 1
+        signal_reasons.append("BB position good")
+        signal_details['bb_position'] = True
+    elif primary_signal == "sell" and current_price > bb_lower:
+        signal_strength += 1
+        signal_reasons.append("BB position good")
         signal_details['bb_position'] = True
     else:
         signal_details['bb_position'] = False
     
-    # 5. Volume/Volatility
+    # 7. Volume/Volatility
     if check_volume_confirmation(df_primary):
         signal_strength += 1
+        signal_reasons.append("Volume confirmed")
         signal_details['volume_conf'] = True
     else:
         signal_details['volume_conf'] = False
     
-    # 6. Support/Resistance
+    # 8. Support/Resistance
     support = latest.get('support', current_price * 0.99)
     resistance = latest.get('resistance', current_price * 1.01)
-    if support < current_price < resistance:
+    if primary_signal == "buy" and current_price > support * 1.001:
         signal_strength += 1
+        signal_reasons.append("Above support")
+        signal_details['sr_levels'] = True
+    elif primary_signal == "sell" and current_price < resistance * 0.999:
+        signal_strength += 1
+        signal_reasons.append("Below resistance")
         signal_details['sr_levels'] = True
     else:
         signal_details['sr_levels'] = False
     
+    # 9. Order Block Confirmation
+    signal_details['order_block_aligned'] = False
+    for ob in order_blocks:
+        if primary_signal == "buy" and ob['type'] == 'bullish':
+            if ob['bottom'] <= current_price <= ob['top'] * 1.01:
+                signal_strength += 2
+                signal_reasons.append("At bullish order block")
+                signal_details['order_block_aligned'] = True
+                break
+        elif primary_signal == "sell" and ob['type'] == 'bearish':
+            if ob['bottom'] * 0.99 <= current_price <= ob['top']:
+                signal_strength += 2
+                signal_reasons.append("At bearish order block")
+                signal_details['order_block_aligned'] = True
+                break
+    
+    # 10. Fair Value Gap Support
+    signal_details['fvg_support'] = False
+    for fvg in fvgs[-5:]:  # Check last 5 FVGs
+        if primary_signal == "buy" and fvg['type'] == 'bullish':
+            if fvg['bottom'] <= current_price <= fvg['top'] * 1.02:
+                signal_strength += 1
+                signal_reasons.append("Bullish FVG support")
+                signal_details['fvg_support'] = True
+                break
+        elif primary_signal == "sell" and fvg['type'] == 'bearish':
+            if fvg['bottom'] * 0.98 <= current_price <= fvg['top']:
+                signal_strength += 1
+                signal_reasons.append("Bearish FVG resistance")
+                signal_details['fvg_support'] = True
+                break
+    
+    # 11. Equal Highs/Lows
+    signal_details['equal_levels'] = False
+    if equal_highs and primary_signal == "sell":
+        for eq_high in equal_highs[-3:]:
+            if abs(current_price - eq_high[0]) / current_price < 0.002:
+                signal_strength += 1
+                signal_reasons.append("At equal highs")
+                signal_details['equal_levels'] = True
+                break
+    elif equal_lows and primary_signal == "buy":
+        for eq_low in equal_lows[-3:]:
+            if abs(current_price - eq_low[0]) / current_price < 0.002:
+                signal_strength += 1
+                signal_reasons.append("At equal lows")
+                signal_details['equal_levels'] = True
+                break
+    
+    # 12. Premium/Discount Zone
+    if premium_zone and discount_zone and equilibrium_zone:
+        if primary_signal == "buy":
+            if discount_zone[0] <= current_price <= discount_zone[1]:
+                signal_strength += 2
+                signal_reasons.append("In discount zone")
+                signal_details['zone_optimal'] = True
+            elif equilibrium_zone[0] <= current_price <= equilibrium_zone[1]:
+                signal_strength += 1
+                signal_reasons.append("At equilibrium")
+                signal_details['zone_neutral'] = True
+            elif premium_zone[0] <= current_price <= premium_zone[1]:
+                signal_strength -= 1
+                signal_reasons.append("In premium zone (risky)")
+                signal_details['zone_risky'] = True
+        elif primary_signal == "sell":
+            if premium_zone[0] <= current_price <= premium_zone[1]:
+                signal_strength += 2
+                signal_reasons.append("In premium zone")
+                signal_details['zone_optimal'] = True
+            elif equilibrium_zone[0] <= current_price <= equilibrium_zone[1]:
+                signal_strength += 1
+                signal_reasons.append("At equilibrium")
+                signal_details['zone_neutral'] = True
+            elif discount_zone[0] <= current_price <= discount_zone[1]:
+                signal_strength -= 1
+                signal_reasons.append("In discount zone (risky)")
+                signal_details['zone_risky'] = True
+    
+    signal_details['total_strength'] = signal_strength
+    signal_details['reasons'] = signal_reasons
+    
     return signal_strength, signal_details
 
 def enhanced_backtest():
-    """Enhanced backtest with optimized parameters"""
-    print("🚀 ENHANCED BACKTEST - OPTIMIZED VERSION")
+    """Enhanced backtest with SMC indicators"""
+    print("🚀 ENHANCED BACKTEST - WITH SMART MONEY CONCEPTS")
     print("="*50)
     print(f"Date Range: {START_DATE} to {END_DATE}")
     print(f"Symbol: {SYMBOL}, Primary TF: {TF_PRIMARY}")
     print(f"Risk per trade: {RISK_PERCENT*100:.1f}%")
-    print(f"Min Signal Strength: {MIN_SIGNAL_STRENGTH}/6")
+    print(f"Min Signal Strength: {MIN_SIGNAL_STRENGTH}/12+ (with SMC)")
     
     if not mt5.initialize():
         raise RuntimeError("MT5 initialization failed")
@@ -165,18 +313,44 @@ def enhanced_backtest():
             if last_trade_time and (current_time - last_trade_time).total_seconds() < COOLDOWN_MINUTES * 60:
                 continue
             
-            # 1. MACD signal
+            # Calculate SMC indicators
+            order_blocks = detect_order_blocks(current_data)
+            fvgs = detect_fair_value_gaps(current_data)
+            bos_choch, bos_level = detect_break_of_structure(current_data)
+            equal_highs, equal_lows = detect_equal_highs_lows(current_data)
+            premium_zone, discount_zone, equilibrium_zone = detect_premium_discount_zones(current_data)
+            
+            # 1. Primary signal detection (MACD + SuperTrend)
             primary_signal = None
+            
+            # MACD signal
             if latest.get('macd_cross_up', False):
                 primary_signal = "buy"
             elif latest.get('macd_cross_dn', False):
                 primary_signal = "sell"
             
+            # SuperTrend can also initiate signals
+            if primary_signal is None:
+                if latest.get('supertrend_buy', False):
+                    primary_signal = "buy"
+                elif latest.get('supertrend_sell', False):
+                    primary_signal = "sell"
+            
+            # CHoCH is a very strong signal
+            if bos_choch == 'bullish_choch':
+                primary_signal = "buy"
+            elif bos_choch == 'bearish_choch':
+                primary_signal = "sell"
+            
             if primary_signal is None:
                 continue
             
-            # 2. Signal strength evaluation
-            signal_strength, _ = evaluate_signal_strength(latest, current_data, current_price)
+            # 2. Signal strength evaluation with SMC
+            signal_strength, signal_details = evaluate_signal_strength_smc(
+                latest, current_data, current_price, primary_signal,
+                order_blocks, fvgs, bos_choch, equal_highs, equal_lows,
+                premium_zone, discount_zone, equilibrium_zone
+            )
             
             if signal_strength < MIN_SIGNAL_STRENGTH:
                 rejected_signals.append("insufficient_signal_strength")
@@ -235,12 +409,20 @@ def enhanced_backtest():
                 rejected_signals.append("invalid_atr")
                 continue
             
-            # Dynamic risk based on signal strength
+            # Dynamic risk based on signal strength (adjusted for SMC)
             risk_multiplier = 1.0
-            if signal_strength >= 5:
+            if signal_strength >= 8:  # Very strong signal with SMC confluence
+                risk_multiplier = 1.8
+            elif signal_strength >= 6:  # Strong signal
                 risk_multiplier = 1.5
-            elif signal_strength >= 4:
+            elif signal_strength >= 4:  # Good signal
                 risk_multiplier = 1.2
+            
+            # Extra boost for specific high-confidence setups
+            if bos_choch and ('choch' in bos_choch.lower()):
+                risk_multiplier *= 1.2  # CHoCH is very reliable
+            if signal_details.get('order_block_aligned') and signal_details.get('fvg_support'):
+                risk_multiplier *= 1.1  # Both SMC concepts align
             
             adjusted_risk = min(RISK_PERCENT * risk_multiplier, RISK_PERCENT * 2.0)
             risk_amount = balance * adjusted_risk
@@ -287,7 +469,16 @@ def enhanced_backtest():
                 "pnl": pnl,
                 "balance": balance,
                 "signal_strength": signal_strength,
-                "outcome": outcome
+                "outcome": outcome,
+                "reasons": signal_details.get('reasons', []),
+                "supertrend_aligned": signal_details.get('supertrend_aligned', False),
+                "bos_choch": signal_details.get('bos_choch', None),
+                "order_block": signal_details.get('order_block_aligned', False),
+                "fvg": signal_details.get('fvg_support', False),
+                "zone": 'premium' if signal_details.get('zone_optimal') and primary_signal == 'sell' 
+                       else 'discount' if signal_details.get('zone_optimal') and primary_signal == 'buy'
+                       else 'neutral',
+                "risk_multiplier": risk_multiplier
             })
 
         # Generate results
@@ -331,10 +522,61 @@ def enhanced_backtest():
                     pct = count / len(rejected_signals) * 100
                     print(f"  {reason}: {count} ({pct:.1f}%)")
             
-            print(f"\n🎯 IMPROVEMENT vs Original 34% Win Rate:")
-            print(f"  ✅ Win Rate: {win_rate:.1f}% (vs 34%)")
+            # SMC Analysis
+            smc_trades = [t for t in trades if t.get('bos_choch') or t.get('order_block') or t.get('fvg')]
+            supertrend_trades = [t for t in trades if t.get('supertrend_aligned')]
+            choch_trades = [t for t in trades if t.get('bos_choch') and 'choch' in str(t.get('bos_choch')).lower()]
+            
+            print(f"\n📊 SMC ANALYSIS:")
+            if smc_trades:
+                smc_wins = [t for t in smc_trades if t['pnl'] > 0]
+                smc_win_rate = len(smc_wins) / len(smc_trades) * 100
+                print(f"  SMC-confirmed trades: {len(smc_trades)} ({smc_win_rate:.1f}% win rate)")
+            
+            if supertrend_trades:
+                st_wins = [t for t in supertrend_trades if t['pnl'] > 0]
+                st_win_rate = len(st_wins) / len(supertrend_trades) * 100
+                print(f"  SuperTrend-aligned: {len(supertrend_trades)} ({st_win_rate:.1f}% win rate)")
+            
+            if choch_trades:
+                choch_wins = [t for t in choch_trades if t['pnl'] > 0]
+                choch_win_rate = len(choch_wins) / len(choch_trades) * 100 if choch_trades else 0
+                print(f"  CHoCH trades: {len(choch_trades)} ({choch_win_rate:.1f}% win rate)")
+            
+            # Zone analysis
+            premium_trades = [t for t in trades if t.get('zone') == 'premium']
+            discount_trades = [t for t in trades if t.get('zone') == 'discount']
+            
+            if premium_trades or discount_trades:
+                print(f"\n📍 ZONE ANALYSIS:")
+                if premium_trades:
+                    p_wins = [t for t in premium_trades if t['pnl'] > 0]
+                    print(f"  Premium zone sells: {len(premium_trades)} ({len(p_wins)/len(premium_trades)*100:.1f}% win rate)")
+                if discount_trades:
+                    d_wins = [t for t in discount_trades if t['pnl'] > 0]
+                    print(f"  Discount zone buys: {len(discount_trades)} ({len(d_wins)/len(discount_trades)*100:.1f}% win rate)")
+            
+            # Best performing signal combinations
+            print(f"\n🏆 TOP SIGNAL COMBINATIONS:")
+            signal_combos = {}
+            for trade in trades:
+                key = f"Strength {trade['signal_strength']}"
+                if key not in signal_combos:
+                    signal_combos[key] = {'count': 0, 'wins': 0, 'total_pnl': 0}
+                signal_combos[key]['count'] += 1
+                signal_combos[key]['total_pnl'] += trade['pnl']
+                if trade['pnl'] > 0:
+                    signal_combos[key]['wins'] += 1
+            
+            for combo, stats in sorted(signal_combos.items(), key=lambda x: x[1]['total_pnl'], reverse=True)[:5]:
+                combo_wr = stats['wins'] / stats['count'] * 100 if stats['count'] > 0 else 0
+                print(f"  {combo}: {stats['count']} trades, {combo_wr:.1f}% WR, ${stats['total_pnl']:.2f} profit")
+            
+            print(f"\n🎯 IMPROVEMENT vs Original:")
+            print(f"  ✅ Win Rate: {win_rate:.1f}% (vs 34% baseline)")
             print(f"  ✅ Profit Factor: {profit_factor:.2f}")
-            print(f"  ✅ Signal Quality: {avg_signal_strength:.1f}/6 average")
+            print(f"  ✅ Signal Quality: {avg_signal_strength:.1f}/12+ average")
+            print(f"  ✅ Risk-adjusted returns: {total_return/1000*100:.1f}% with dynamic sizing")
             
         else:
             print("❌ No trades executed")
