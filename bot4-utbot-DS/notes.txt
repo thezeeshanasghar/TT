@@ -1,0 +1,5 @@
+pick up the code from this link
+https://www.tradingview.com/script/R9nsvSZR/
+
+and then ask deepskeek thinkin to convert into MetaTrader5
+

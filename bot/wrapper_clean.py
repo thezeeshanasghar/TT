@@ -27,8 +27,8 @@ TF_CONFIRM_M1 = os.getenv("TF_CONFIRM_M1", "M5")
 TF_CONFIRM_M2 = os.getenv("TF_CONFIRM_M2", "H1")
 
 # Test period
-START_DATE = datetime(2025, 9, 8)
-END_DATE = datetime(2025, 9, 14)
+START_DATE = datetime(2025, 9, 15)
+END_DATE = datetime(2025, 9, 19)
 
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "1")) / 100.0
 ATR_MULTIPLIER = float(os.getenv("ATR_MULTIPLIER", "1.5"))
@@ -300,25 +300,43 @@ def enhanced_backtest():
         c1_multiplier = get_timeframe_multiplier(TF_PRIMARY, TF_CONFIRM_M1)
         c2_multiplier = get_timeframe_multiplier(TF_PRIMARY, TF_CONFIRM_M2)
 
+        # Initialize SMC variables
+        order_blocks = []
+        fvgs = []
+        equal_highs = []
+        equal_lows = []
+        premium_zone = None
+        discount_zone = None
+        equilibrium_zone = None
+
         print("Running simulation...")
+        total_candles = len(df_primary) - 200
         
-        # Backtest loop
-        for i in range(200, len(df_primary)):
+        # Backtest loop with progress tracking
+        for iteration, i in enumerate(range(200, len(df_primary))):
             current_data = df_primary.iloc[:i+1]
             latest = current_data.iloc[-1]
             current_price = latest['close']
             current_time = latest['time']
             
+            # Progress indicator every 10% of the way
+            if iteration % (total_candles // 10) == 0:
+                progress_pct = (iteration / total_candles) * 100
+                print(f"Progress: {progress_pct:.0f}% ({iteration}/{total_candles} candles processed)")
+            
             # Cooldown check
             if last_trade_time and (current_time - last_trade_time).total_seconds() < COOLDOWN_MINUTES * 60:
                 continue
             
-            # Calculate SMC indicators
-            order_blocks = detect_order_blocks(current_data)
-            fvgs = detect_fair_value_gaps(current_data)
+            # Calculate SMC indicators (optimized - every 5th candle for non-critical checks)
+            if iteration % 5 == 0:  # Recalculate every 5 candles for performance
+                order_blocks = detect_order_blocks(current_data)
+                fvgs = detect_fair_value_gaps(current_data)
+                equal_highs, equal_lows = detect_equal_highs_lows(current_data)
+                premium_zone, discount_zone, equilibrium_zone = detect_premium_discount_zones(current_data)
+            
+            # Always check BOS/CHoCH as it's critical for signals
             bos_choch, bos_level = detect_break_of_structure(current_data)
-            equal_highs, equal_lows = detect_equal_highs_lows(current_data)
-            premium_zone, discount_zone, equilibrium_zone = detect_premium_discount_zones(current_data)
             
             # 1. Primary signal detection (MACD + SuperTrend)
             primary_signal = None

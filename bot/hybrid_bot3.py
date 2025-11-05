@@ -387,44 +387,47 @@ def calculate_price_momentum(df, period=10):
     return momentum
 
 def detect_order_blocks(df, lookback=50, internal=False):
-    """Detect order blocks based on Smart Money Concepts"""
+    """Detect order blocks based on Smart Money Concepts - OPTIMIZED"""
     order_blocks = []
     
+    # Only analyze recent data to improve performance
+    recent_data = df.tail(lookback + 10).copy()  # Limit to recent candles
+    
     # Identify swing highs and lows
-    for i in range(2, len(df) - 2):
+    for i in range(2, len(recent_data) - 2):
         # Swing high: higher than 2 candles before and after
-        if (df.iloc[i]['high'] > df.iloc[i-1]['high'] and 
-            df.iloc[i]['high'] > df.iloc[i-2]['high'] and
-            df.iloc[i]['high'] > df.iloc[i+1]['high'] and 
-            df.iloc[i]['high'] > df.iloc[i+2]['high']):
+        if (recent_data.iloc[i]['high'] > recent_data.iloc[i-1]['high'] and 
+            recent_data.iloc[i]['high'] > recent_data.iloc[i-2]['high'] and
+            recent_data.iloc[i]['high'] > recent_data.iloc[i+1]['high'] and 
+            recent_data.iloc[i]['high'] > recent_data.iloc[i+2]['high']):
             
             # Look for the last down candle before the swing high (bearish OB)
             for j in range(i-1, max(0, i-10), -1):
-                if df.iloc[j]['close'] < df.iloc[j]['open']:
+                if recent_data.iloc[j]['close'] < recent_data.iloc[j]['open']:
                     order_blocks.append({
                         'type': 'bearish',
-                        'top': df.iloc[j]['high'],
-                        'bottom': df.iloc[j]['low'],
-                        'time': df.iloc[j]['time'],
+                        'top': recent_data.iloc[j]['high'],
+                        'bottom': recent_data.iloc[j]['low'],
+                        'time': recent_data.iloc[j]['time'],
                         'index': j,
                         'internal': internal
                     })
                     break
         
         # Swing low: lower than 2 candles before and after  
-        if (df.iloc[i]['low'] < df.iloc[i-1]['low'] and 
-            df.iloc[i]['low'] < df.iloc[i-2]['low'] and
-            df.iloc[i]['low'] < df.iloc[i+1]['low'] and 
-            df.iloc[i]['low'] < df.iloc[i+2]['low']):
+        if (recent_data.iloc[i]['low'] < recent_data.iloc[i-1]['low'] and 
+            recent_data.iloc[i]['low'] < recent_data.iloc[i-2]['low'] and
+            recent_data.iloc[i]['low'] < recent_data.iloc[i+1]['low'] and 
+            recent_data.iloc[i]['low'] < recent_data.iloc[i+2]['low']):
             
             # Look for the last up candle before the swing low (bullish OB)
             for j in range(i-1, max(0, i-10), -1):
-                if df.iloc[j]['close'] > df.iloc[j]['open']:
+                if recent_data.iloc[j]['close'] > recent_data.iloc[j]['open']:
                     order_blocks.append({
                         'type': 'bullish',
-                        'top': df.iloc[j]['high'],
-                        'bottom': df.iloc[j]['low'],
-                        'time': df.iloc[j]['time'],
+                        'top': recent_data.iloc[j]['high'],
+                        'bottom': recent_data.iloc[j]['low'],
+                        'time': recent_data.iloc[j]['time'],
                         'index': j,
                         'internal': internal
                     })
@@ -435,34 +438,40 @@ def detect_order_blocks(df, lookback=50, internal=False):
     return order_blocks
 
 def detect_fair_value_gaps(df, threshold_multiplier=1.5):
-    """Detect Fair Value Gaps (FVG) - price inefficiencies"""
+    """Detect Fair Value Gaps (FVG) - price inefficiencies - OPTIMIZED"""
     fvgs = []
     
     if len(df) < 3:
         return fvgs
     
-    # Calculate average candle range for threshold
-    avg_range = df['high'].rolling(20).mean() - df['low'].rolling(20).mean()
+    # Only analyze recent data for performance
+    recent_data = df.tail(50).copy()  # Limit to last 50 candles
     
-    for i in range(2, len(df)):
+    if len(recent_data) < 3:
+        return fvgs
+    
+    # Calculate average candle range for threshold
+    avg_range = recent_data['high'].rolling(20).mean() - recent_data['low'].rolling(20).mean()
+    
+    for i in range(2, len(recent_data)):
         # Bullish FVG: gap between candle[i-2] high and candle[i] low
-        gap_size = df.iloc[i]['low'] - df.iloc[i-2]['high']
+        gap_size = recent_data.iloc[i]['low'] - recent_data.iloc[i-2]['high']
         if gap_size > 0 and gap_size > avg_range.iloc[i] * 0.1:  # Minimum 10% of average range
             fvgs.append({
                 'type': 'bullish',
-                'top': df.iloc[i]['low'],
-                'bottom': df.iloc[i-2]['high'],
+                'top': recent_data.iloc[i]['low'],
+                'bottom': recent_data.iloc[i-2]['high'],
                 'index': i,
                 'size': gap_size
             })
         
         # Bearish FVG: gap between candle[i-2] low and candle[i] high
-        gap_size = df.iloc[i-2]['low'] - df.iloc[i]['high']
+        gap_size = recent_data.iloc[i-2]['low'] - recent_data.iloc[i]['high']
         if gap_size > 0 and gap_size > avg_range.iloc[i] * 0.1:
             fvgs.append({
                 'type': 'bearish',
-                'top': df.iloc[i-2]['low'],
-                'bottom': df.iloc[i]['high'],
+                'top': recent_data.iloc[i-2]['low'],
+                'bottom': recent_data.iloc[i]['high'],
                 'index': i,
                 'size': gap_size
             })
@@ -470,28 +479,31 @@ def detect_fair_value_gaps(df, threshold_multiplier=1.5):
     return fvgs
 
 def detect_break_of_structure(df, lookback=20):
-    """Detect Break of Structure (BOS) and Change of Character (CHoCH)"""
+    """Detect Break of Structure (BOS) and Change of Character (CHoCH) - OPTIMIZED"""
     if len(df) < lookback + 5:
         return None, None
+    
+    # Only analyze recent data to improve performance
+    recent_data = df.tail(lookback + 10).copy()  # Get last 30 candles max
     
     # Find recent swing highs and lows
     swing_highs = []
     swing_lows = []
     
-    for i in range(2, len(df) - 2):
+    for i in range(2, len(recent_data) - 2):
         # Swing high
-        if (df.iloc[i]['high'] > df.iloc[i-1]['high'] and 
-            df.iloc[i]['high'] > df.iloc[i-2]['high'] and
-            df.iloc[i]['high'] > df.iloc[i+1]['high'] and 
-            df.iloc[i]['high'] > df.iloc[i+2]['high']):
-            swing_highs.append((i, df.iloc[i]['high']))
+        if (recent_data.iloc[i]['high'] > recent_data.iloc[i-1]['high'] and 
+            recent_data.iloc[i]['high'] > recent_data.iloc[i-2]['high'] and
+            recent_data.iloc[i]['high'] > recent_data.iloc[i+1]['high'] and 
+            recent_data.iloc[i]['high'] > recent_data.iloc[i+2]['high']):
+            swing_highs.append((i, recent_data.iloc[i]['high']))
         
         # Swing low
-        if (df.iloc[i]['low'] < df.iloc[i-1]['low'] and 
-            df.iloc[i]['low'] < df.iloc[i-2]['low'] and
-            df.iloc[i]['low'] < df.iloc[i+1]['low'] and 
-            df.iloc[i]['low'] < df.iloc[i+2]['low']):
-            swing_lows.append((i, df.iloc[i]['low']))
+        if (recent_data.iloc[i]['low'] < recent_data.iloc[i-1]['low'] and 
+            recent_data.iloc[i]['low'] < recent_data.iloc[i-2]['low'] and
+            recent_data.iloc[i]['low'] < recent_data.iloc[i+1]['low'] and 
+            recent_data.iloc[i]['low'] < recent_data.iloc[i+2]['low']):
+            swing_lows.append((i, recent_data.iloc[i]['low']))
     
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return None, None
@@ -501,7 +513,7 @@ def detect_break_of_structure(df, lookback=20):
     prev_high = swing_highs[-2][1]
     last_low = swing_lows[-1][1]
     prev_low = swing_lows[-2][1]
-    current_close = df.iloc[-1]['close']
+    current_close = recent_data.iloc[-1]['close']
     
     # Bullish BOS: Higher high and higher low
     if last_high > prev_high and last_low > prev_low:
@@ -524,11 +536,13 @@ def detect_break_of_structure(df, lookback=20):
     return None, None
 
 def detect_equal_highs_lows(df, lookback=20, threshold=0.001):
-    """Detect equal highs and equal lows for better S/R detection"""
+    """Detect equal highs and equal lows for better S/R detection - OPTIMIZED"""
     if len(df) < lookback:
         return [], []
     
-    recent_data = df.tail(lookback)
+    # Use smaller lookback for performance
+    actual_lookback = min(lookback, 30)  # Cap at 30 candles
+    recent_data = df.tail(actual_lookback)
     highs = recent_data['high'].values
     lows = recent_data['low'].values
     
@@ -1121,7 +1135,7 @@ def main_loop():
                     "signal_reasons": signal_reasons,
                     "supertrend": latest.get('supertrend_signal', 0),
                     "bos_choch": bos_choch if bos_choch else "none",
-                    "order_blocks": len([ob for ob in order_blocks if ob['type'] == 'bullish' if primary_signal == 'buy' else ob['type'] == 'bearish']),
+                    "order_blocks": len([ob for ob in order_blocks if (ob['type'] == 'bullish' if primary_signal == 'buy' else ob['type'] == 'bearish')]),
                     "market_structure": structure_type
                 }
 

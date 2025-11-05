@@ -1,0 +1,8 @@
+
+https://chatgpt.com/g/g-XC5PsNAwL-tradingview-indicator-stratagy-developer/c/6908399a-9bc8-8320-85c4-9c595cc00f34
+
+prompt1
+I need a bot in python using mt5
+that take fibonanci based auto trading with proper risk management. 
+it work on m5 timeframe
+but also looks for m15 or m30 for trend analysis
